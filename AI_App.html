@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>Chat with the Map</title>
+
+    <style>
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        overflow: hidden;
+        font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      #app-container,
+      calcite-shell,
+      arcgis-map {
+        width: 100%;
+        height: 100%;
+      }
+
+      #sign-in-screen {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        display: grid;
+        place-items: center;
+        box-sizing: border-box;
+        padding: 24px;
+        background: linear-gradient(135deg, #004b91, #007ac2);
+      }
+
+      .sign-in-card {
+        width: min(460px, 100%);
+        box-sizing: border-box;
+        padding: 28px;
+        border-radius: 12px;
+        background: #fff;
+        box-shadow: 0 14px 38px rgb(0 0 0 / 28%);
+      }
+
+      .sign-in-card h1 {
+        margin: 0 0 10px;
+        color: #202020;
+        font-size: 24px;
+        font-weight: 600;
+      }
+
+      .sign-in-card p {
+        margin: 0 0 20px;
+        color: #555;
+        font-size: 15px;
+        line-height: 1.5;
+      }
+
+      .sign-in-card label {
+        display: block;
+        margin-bottom: 8px;
+        color: #2e2f33;
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 1.3;
+      }
+
+      .org-url-row {
+        display: flex;
+        align-items: stretch;
+        width: min(520px, 100%);
+        box-sizing: border-box;
+        background: #fff;
+      }
+
+      .org-url-field {
+        display: flex;
+        align-items: center;
+        width: 170px;
+        min-width: 170px;
+        min-height: 42px;
+        box-sizing: border-box;
+        border: 1px solid #b6bbc3;
+        border-right: 1px solid #b6bbc3;
+        border-radius: 2px 0 0 2px;
+        background: #fff;
+      }
+
+      .org-url-field:focus-within {
+        border-color: #838a92;
+      }
+
+      #org-url {
+        width: 100%;
+        min-height: 42px;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        border: 0;
+        border-radius: 0;
+        color: #222;
+        background: #fff;
+        font-size: 14px;
+        line-height: 1.3;
+      }
+
+      #org-url:focus {
+        outline: none;
+      }
+
+      .domain-suffix {
+        display: inline-flex;
+        align-items: center;
+        padding: 0 12px 0 10px;
+        color: #333;
+        background: #fff;
+        font-size: 14px;
+        white-space: nowrap;
+        border: 0;
+      }
+
+      .example {
+        display: none;
+      }
+
+      #sign-in-button {
+        width: 100%;
+        min-height: 42px;
+        margin-top: 20px;
+        border: 0;
+        border-radius: 4px;
+        color: #fff;
+        background: #007ac2;
+        cursor: pointer;
+        font-size: 15px;
+        font-weight: 600;
+      }
+
+      #sign-in-button:hover {
+        background: #00619b;
+      }
+
+      #sign-in-button:disabled {
+        background: #9a9a9a;
+        cursor: wait;
+      }
+
+      #status-message {
+        min-height: 20px;
+        margin: 16px 0 0;
+        color: #555;
+        font-size: 14px;
+      }
+
+      #status-message.error {
+        color: #b3261e;
+      }
+
+      #account-bar {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 9px;
+        border: 1px solid #aaa;
+        border-radius: 5px;
+        background: rgb(255 255 255 / 95%);
+        box-shadow: 0 1px 5px rgb(0 0 0 / 22%);
+        color: #333;
+        font-size: 13px;
+      }
+
+      #change-org-button {
+        padding: 5px 9px;
+        border: 1px solid #777;
+        border-radius: 3px;
+        background: #fff;
+        cursor: pointer;
+      }
+
+      @media (max-width: 700px) {
+        #sign-in-screen {
+          padding: 14px;
+        }
+
+        .sign-in-card {
+          padding: 22px;
+        }
+      }
+    </style>
+
+    <!-- Load the ArcGIS Maps SDK for JavaScript from CDN. -->
+    <script type="module" src="https://js.arcgis.com/5.1/"></script>
+
+    <script type="module">
+      // Replace this value with the App ID from your registered OAuth application.
+      const APP_ID = "cYco1ZReaB9L6kmP";
+
+      // Web map used by Esri's AI Assistant sample.
+      const WEB_MAP_ID = "99cbde41b8c143dd97385a2a9e3d8f03";
+
+      // Keeps the selected organization available across the OAuth redirect.
+      const PORTAL_STORAGE_KEY = "aiAssistantPortalUrl";
+
+      const [esriConfig, Portal, OAuthInfo, identityManager] = await $arcgis.import([
+        "@arcgis/core/config.js",
+        "@arcgis/core/portal/Portal.js",
+        "@arcgis/core/identity/OAuthInfo.js",
+        "@arcgis/core/identity/IdentityManager.js",
+      ]);
+
+      let activePortalUrl = sessionStorage.getItem(PORTAL_STORAGE_KEY);
+
+      // Register OAuth before creating the map or Assistant components.
+      if (activePortalUrl) {
+        configureOAuth(activePortalUrl);
+      }
+
+      function normalizeArcGISOnlineUrl(value) {
+        let input = value.trim();
+
+        if (!input) {
+          throw new Error("Enter your ArcGIS Online organization name or URL.");
+        }
+
+        // Accept a short organization name such as "learngis".
+        if (!input.includes(".") && !input.includes("/")) {
+          input = `https://${input}.maps.arcgis.com`;
+        } else if (!/^https:\/\//i.test(input)) {
+          input = `https://${input}`;
+        }
+
+        let url;
+
+        try {
+          url = new URL(input);
+        } catch {
+          throw new Error("The organization URL is not valid.");
+        }
+
+        const hostname = url.hostname.toLowerCase();
+        const isArcGISOnline =
+          hostname === "www.arcgis.com" || hostname.endsWith(".maps.arcgis.com");
+
+        if (url.protocol !== "https:" || !isArcGISOnline) {
+          throw new Error(
+            "Enter an ArcGIS Online URL such as https://myorg.maps.arcgis.com.",
+          );
+        }
+
+        return `https://${hostname}`;
+      }
+
+      function configureOAuth(portalUrl) {
+        // The map and OAuth configuration must use the same organization URL.
+        esriConfig.portalUrl = portalUrl;
+
+        const oauthInfo = new OAuthInfo({
+          appId: APP_ID,
+          portalUrl,
+          popup: false,
+          flowType: "auto",
+          preserveUrlHash: true,
+          authNamespace: "ai-assistant-multi-org",
+        });
+
+        identityManager.registerOAuthInfos([oauthInfo]);
+      }
+
+      async function authenticate(portalUrl) {
+        const sharingUrl = `${portalUrl}/sharing`;
+
+        try {
+          await identityManager.checkSignInStatus(sharingUrl);
+        } catch {
+          // This opens the selected organization's OAuth page. That page presents
+          // the built-in, SAML, or OpenID Connect methods enabled by the organization.
+          await identityManager.getCredential(sharingUrl);
+        }
+
+        const portal = new Portal({
+          url: portalUrl,
+          authMode: "immediate",
+        });
+
+        await portal.load();
+        return portal;
+      }
+
+      function createApplication(portal) {
+        const appContainer = document.querySelector("#app-container");
+        const template = document.querySelector("#app-template");
+
+        appContainer.replaceChildren(template.content.cloneNode(true));
+
+        const mapElement = appContainer.querySelector("#my-map");
+        const assistantElement = appContainer.querySelector("arcgis-assistant");
+
+        assistantElement.suggestedPrompts = [
+          "What information can I explore in this map?",
+          "What questions can I ask you?",
+          "What can you do?"
+        ];
+
+        // Assign the item only after OAuth succeeds. This prevents IdentityManager
+        // from displaying its username/password-only token dialog.
+        mapElement.itemId = WEB_MAP_ID;
+
+        document.querySelector("#signed-in-user").textContent =
+          `${portal.user.fullName} (${portal.user.username})`;
+
+        document.querySelector("#sign-in-screen").hidden = true;
+        document.querySelector("#account-bar").hidden = false;
+        appContainer.hidden = false;
+      }
+
+      function resetToOrganizationSelection() {
+        identityManager.destroyCredentials();
+        sessionStorage.removeItem(PORTAL_STORAGE_KEY);
+        activePortalUrl = null;
+
+        document.querySelector("#app-container").replaceChildren();
+        document.querySelector("#app-container").hidden = true;
+        document.querySelector("#account-bar").hidden = true;
+        document.querySelector("#sign-in-screen").hidden = false;
+        document.querySelector("#org-form").hidden = false;
+        document.querySelector("#sign-in-button").disabled = false;
+        document.querySelector("#status-message").textContent = "";
+        document.querySelector("#status-message").classList.remove("error");
+        document.querySelector("#org-url").focus();
+      }
+
+      async function startSignIn(portalUrl) {
+        const form = document.querySelector("#org-form");
+        const button = document.querySelector("#sign-in-button");
+        const status = document.querySelector("#status-message");
+        const orgName = new URL(portalUrl).hostname.split(".")[0];
+
+        form.hidden = true;
+        button.disabled = true;
+        status.classList.remove("error");
+        status.textContent = `Connecting to ${orgName}...`;
+
+        try {
+          const portal = await authenticate(portalUrl);
+          createApplication(portal);
+        } catch (error) {
+          console.error("ArcGIS sign-in failed:", error);
+          sessionStorage.removeItem(PORTAL_STORAGE_KEY);
+          activePortalUrl = null;
+          form.hidden = false;
+          button.disabled = false;
+          status.classList.add("error");
+          status.textContent =
+            "Sign-in was unsuccessful. Verify the organization URL and try again.";
+        }
+      }
+
+      async function initialize() {
+        const form = document.querySelector("#org-form");
+        const input = document.querySelector("#org-url");
+
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+
+          const status = document.querySelector("#status-message");
+          status.textContent = "";
+          status.classList.remove("error");
+
+          try {
+            activePortalUrl = normalizeArcGISOnlineUrl(input.value);
+            sessionStorage.setItem(PORTAL_STORAGE_KEY, activePortalUrl);
+            configureOAuth(activePortalUrl);
+            await startSignIn(activePortalUrl);
+          } catch (error) {
+            status.classList.add("error");
+            status.textContent = error.message;
+          }
+        });
+
+        document.querySelector("#change-org-button").addEventListener("click", () => {
+          resetToOrganizationSelection();
+        });
+
+        if (activePortalUrl) {
+          await startSignIn(activePortalUrl);
+        } else {
+          input.focus();
+        }
+      }
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", initialize, { once: true });
+      } else {
+        initialize();
+      }
+    </script>
+  </head>
+
+  <body>
+    <section id="sign-in-screen" aria-labelledby="sign-in-heading">
+      <div class="sign-in-card">
+        <h1 id="sign-in-heading">Sign in to ArcGIS Online</h1>
+        <p>
+          Enter your organization. ArcGIS Online will present the built-in,
+          SAML, or OpenID Connect sign-in methods enabled by your administrator.
+        </p>
+
+        <form id="org-form">
+          <label for="org-url">Your ArcGIS organization's URL</label>
+          <div class="org-url-row">
+            <div class="org-url-field">
+              <input
+                id="org-url"
+                name="org-url"
+                type="text"
+                autocomplete="url"
+                spellcheck="false"
+                required
+              />
+            </div>
+            <span class="domain-suffix">.maps.arcgis.com</span>
+          </div>
+          <button id="sign-in-button" type="submit">Continue to sign in</button>
+        </form>
+
+        <div id="status-message" role="status" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <div id="app-container" hidden></div>
+
+    <div id="account-bar" hidden>
+      <span id="signed-in-user"></span>
+      <button id="change-org-button" type="button">Change organization</button>
+    </div>
+
+    <!--
+      The ArcGIS components stay inert in this template until authentication succeeds.
+      This prevents them from triggering the non-OAuth username/password dialog.
+    -->
+    <template id="app-template">
+      <calcite-shell>
+        <arcgis-map id="my-map">
+          <arcgis-zoom slot="top-left"></arcgis-zoom>
+          <arcgis-expand slot="top-left">
+            <arcgis-legend></arcgis-legend>
+          </arcgis-expand>
+        </arcgis-map>
+
+        <calcite-shell-panel slot="panel-end" width="l" id="assistant-panel">
+          <calcite-panel>
+            <arcgis-assistant
+              log-enabled
+              copy-enabled
+              reference-element="#my-map"
+              heading="Chat with the Map"
+              description="Ask questions about the data shown on the map."
+              entry-message="Hello! How can I help you explore this map?"
+            >
+              <arcgis-assistant-navigation-agent></arcgis-assistant-navigation-agent>
+              <arcgis-assistant-data-exploration-agent></arcgis-assistant-data-exploration-agent>
+              <arcgis-assistant-help-agent></arcgis-assistant-help-agent>
+            </arcgis-assistant>
+          </calcite-panel>
+        </calcite-shell-panel>
+      </calcite-shell>
+    </template>
+  </body>
+</html>
